@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TMS Customer Search</title>
+  <style>
+    :root{--bg:#0b1220;--fg:#e8eefc;--muted:#a9b3c7;--card:#121a2b;--accent:#4ea1ff;--ok:#12c48b;--err:#ff7070;--bd:#22314d}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif}
+    .wrap{max-width:980px;margin:40px auto;padding:0 16px}
+    h1{font-weight:700;letter-spacing:.3px;margin:0 0 12px}
+    p.sub{margin:0 0 20px;color:var(--muted)}
+    form{display:flex;gap:8px;flex-wrap:wrap;background:var(--card);padding:12px;border:1px solid var(--bd);border-radius:14px}
+    form input[type="text"]{flex:1 1 280px;padding:10px 12px;border-radius:10px;border:1px solid var(--bd);background:#0e1627;color:var(--fg)}
+    form button{padding:10px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--accent);color:#071120;font-weight:700;cursor:pointer}
+    .status{margin:12px 0 0;min-height:20px;font-size:14px}
+    .status.ok{color:var(--ok)} .status.err{color:var(--err)} .muted{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:16px}
+    .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px}
+    .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 10px;font-size:14px}
+    .kv div.k{color:var(--muted)}
+    .pill{display:inline-block;font-size:12px;border:1px solid var(--bd);padding:2px 8px;border-radius:999px;background:#0e1627}
+    .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    .sep{height:1px;background:var(--bd);margin:8px 0 12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Customer Search</h1>
+    <p class="sub">This page calls a same-origin Vercel Function that logs in to TMS and searches customers.</p>
+
+    <form id="searchForm">
+      <input id="query" type="text" placeholder="Search customer name (min 3 chars)" autocomplete="off" />
+      <button id="goBtn" type="submit">Search</button>
+    </form>
+    <div class="status muted" id="status">Idle.</div>
+    <div class="grid" id="results"></div>
+  </div>
+
+<script>
+(async function(){
+  const $ = id => document.getElementById(id);
+  const status = $("status"), results = $("results"), form = $("searchForm"), query = $("query");
+
+  const setStatus = (msg, cls="muted") => { status.className = "status " + cls; status.textContent = msg; };
+  const safe = s => (s==null ? "" : String(s));
+  const card = ({location_name, location_code, location_city, location_id}) => `
+    <div class="card">
+      <div class="row">
+        <strong>${safe(location_name)}</strong>
+        <span class="pill">${safe(location_code)}</span>
+      </div>
+      <div class="sep"></div>
+      <div class="kv">
+        <div class="k">City</div><div>${safe(location_city)}</div>
+        <div class="k">Location ID</div><div>${safe(location_id)}</div>
+      </div>
+    </div>`;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    results.innerHTML = "";
+    const q = (query.value || "").trim();
+    if (q.length < 3) return setStatus("Please enter at least 3 characters.", "err");
+    try {
+      setStatus("Searching…");
+      const resp = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ search_name: q })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Search failed");
+      const items = data.items || [];
+      if (!items.length) return setStatus("No results found.", "ok");
+      results.innerHTML = items.map(card).join("");
+      setStatus(`Showing ${items.length} result(s).`, "ok");
+    } catch (err) {
+      console.error(err);
+      setStatus("Error: " + err.message, "err");
+    }
+  });
+})();
+</script>
+</body>
+</html>
