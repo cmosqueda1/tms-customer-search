@@ -1,5 +1,5 @@
 // api/search.js
-// Vercel serverless function: logs in, then searches customers in one request.
+// Vercel serverless function: login -> search_location_master_v2 -> return mapped items
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -7,26 +7,28 @@ export default async function handler(req, res) {
   }
 
   try {
-    // read body (JSON or form)
-    let search_name = "";
-    if (req.headers["content-type"]?.includes("application/json")) {
-      search_name = (req.body?.search_name || "").toString().trim();
+    // --- read input (JSON or form) ---
+    let searchInput = "";
+    const ct = req.headers["content-type"] || "";
+    if (ct.includes("application/json")) {
+      searchInput = (req.body?.search_name || req.body?.search_term || "").toString().trim();
     } else {
-      const text = req.body ? req.body.toString() : "";
-      const params = new URLSearchParams(text);
-      search_name = (params.get("search_name") || "").toString().trim();
+      const raw = req.body ? req.body.toString() : "";
+      const p = new URLSearchParams(raw);
+      searchInput = (p.get("search_name") || p.get("search_term") || "").toString().trim();
     }
-    if (search_name.length < 3) {
-      return res.status(400).json({ error: "search_name must be at least 3 characters" });
+
+    if (searchInput.length < 3) {
+      return res.status(400).json({ error: "search term must be at least 3 characters" });
     }
 
     const username = process.env.TMS_USERNAME;
-    const password = process.env.TMS_PASSWORD; // pass exactly what your login expects
+    const password = process.env.TMS_PASSWORD; // pass exactly what the TMS expects
     if (!username || !password) {
       return res.status(500).json({ error: "Server missing TMS credentials" });
     }
 
-    // 1) LOGIN
+    // --- 1) LOGIN ---
     const loginBody = new URLSearchParams({
       username,
       password,
@@ -48,8 +50,8 @@ export default async function handler(req, res) {
       body: loginBody.toString()
     });
 
-    // capture session cookie(s)
-    const setCookie =
+    // collect session cookies for the follow-up request
+    const cookieHeader =
       loginResp.headers.get("set-cookie") ||
       (loginResp.headers.getSetCookie ? loginResp.headers.getSetCookie().join("; ") : "");
 
@@ -60,32 +62,28 @@ export default async function handler(req, res) {
     } catch {
       return res.status(502).json({ error: "Login did not return JSON", raw: loginText });
     }
+
     const userId = loginJson?.UserID || "";
     const userToken = loginJson?.UserToken || "";
     if (!userId || !userToken) {
       return res.status(401).json({ error: "Missing UserID/UserToken", raw: loginJson });
     }
 
-    // 2) SEARCH (customer/location search) — includes required flags
+    // --- 2) SEARCH via search_location_master_v2.php ---
+    // required payload (from your example)
     const searchBody = new URLSearchParams({
-      search_name,                 // user input
-      // required flags
-      input_billto_only: "1",
+      search_term: searchInput,
       input_inactive: "0",
-      input_carrier_only: "0",
-      input_terminal_only: "0",
-      input_search_group: "0",
-      // (keep these blank unless you want to search by them specifically)
-      search_code: "",
-      search_id: "",
-      // auth + page
-      UserID: userId,
-      UserToken: userToken,
+      carrieronly: "0",
+      billto: "1",
+      terminalonly: "0",
+      UserID: String(userId),
+      UserToken: String(userToken),
       pageName: "dashboardCustomerSetup"
     });
 
     const searchResp = await fetch(
-      "https://tms.freightapp.com/write_new/search_location_setup.php",
+      "https://tms.freightapp.com/write_new/search_location_master_v2.php",
       {
         method: "POST",
         headers: {
@@ -95,25 +93,30 @@ export default async function handler(req, res) {
           "Origin": "https://tms.freightapp.com",
           "Referer": "https://tms.freightapp.com/dev.html",
           "X-Requested-With": "XMLHttpRequest",
-          ...(setCookie ? { Cookie: setCookie } : {})
+          ...(cookieHeader ? { Cookie: cookieHeader } : {})
         },
         body: searchBody.toString()
       }
     );
 
     const searchText = await searchResp.text();
-    let searchJson;
+    let data;
     try {
-      searchJson = JSON.parse(searchText);
+      data = JSON.parse(searchText);
     } catch {
       return res.status(502).json({ error: "Search did not return JSON", raw: searchText });
     }
 
-    const items = (searchJson.locations || []).map(x => ({
-      location_name: x.location_name,
-      location_code: x.location_code,
-      location_city: x.location_city,
-      location_id: x.location_id
+    // Flexible extraction: v2 may return array or object with a key
+    const rows = Array.isArray(data)
+      ? data
+      : data.locations || data.results || data.items || [];
+
+    const items = rows.map((x) => ({
+      location_name: x.location_name ?? x.name ?? "",
+      location_code: x.location_code ?? x.code ?? "",
+      location_city: x.location_city ?? x.city ?? "",
+      location_id: x.location_id ?? x.id ?? ""
     }));
 
     res.setHeader("Cache-Control", "no-store");
