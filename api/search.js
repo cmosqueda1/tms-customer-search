@@ -48,9 +48,16 @@ export default async function handler(req, res) {
       body: loginBody.toString()
     });
 
-    const setCookie = loginResp.headers.get("set-cookie") || "";
+    // capture session cookie(s)
+    const setCookie =
+      loginResp.headers.get("set-cookie") ||
+      (loginResp.headers.getSetCookie ? loginResp.headers.getSetCookie().join("; ") : "");
+
     const loginText = await loginResp.text();
-    let loginJson; try { loginJson = JSON.parse(loginText); } catch {
+    let loginJson;
+    try {
+      loginJson = JSON.parse(loginText);
+    } catch {
       return res.status(502).json({ error: "Login did not return JSON", raw: loginText });
     }
     const userId = loginJson?.UserID || "";
@@ -59,32 +66,46 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Missing UserID/UserToken", raw: loginJson });
     }
 
-    // 2) SEARCH (customer/location search)
+    // 2) SEARCH (customer/location search) — includes required flags
     const searchBody = new URLSearchParams({
-      search_name,
+      search_name,                 // user input
+      // required flags
+      input_billto_only: "1",
+      input_inactive: "0",
+      input_carrier_only: "0",
+      input_terminal_only: "0",
+      input_search_group: "0",
+      // (keep these blank unless you want to search by them specifically)
       search_code: "",
       search_id: "",
+      // auth + page
       UserID: userId,
       UserToken: userToken,
       pageName: "dashboardCustomerSetup"
     });
 
-    const searchResp = await fetch("https://tms.freightapp.com/write_new/search_location_setup.php", {
-      method: "POST",
-      headers: {
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Origin": "https://tms.freightapp.com",
-        "Referer": "https://tms.freightapp.com/dev.html",
-        "X-Requested-With": "XMLHttpRequest",
-        ...(setCookie ? { Cookie: setCookie } : {})
-      },
-      body: searchBody.toString()
-    });
+    const searchResp = await fetch(
+      "https://tms.freightapp.com/write_new/search_location_setup.php",
+      {
+        method: "POST",
+        headers: {
+          "Accept": "application/json, text/javascript, */*; q=0.01",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+          "Origin": "https://tms.freightapp.com",
+          "Referer": "https://tms.freightapp.com/dev.html",
+          "X-Requested-With": "XMLHttpRequest",
+          ...(setCookie ? { Cookie: setCookie } : {})
+        },
+        body: searchBody.toString()
+      }
+    );
 
     const searchText = await searchResp.text();
-    let searchJson; try { searchJson = JSON.parse(searchText); } catch {
+    let searchJson;
+    try {
+      searchJson = JSON.parse(searchText);
+    } catch {
       return res.status(502).json({ error: "Search did not return JSON", raw: searchText });
     }
 
